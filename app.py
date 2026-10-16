@@ -1,77 +1,60 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
 import json
-import websocket
-import threading
 import time
-from collections import Counter, deque
 from datetime import datetime
+from collections import Counter
 
-# ============================================================
-# BEASTMODE PRO | LIVE MARKET ANALYSIS DASHBOARD
-# ============================================================
+import numpy as np
+import pandas as pd
+import streamlit as st
+import websocket
+
+# ==========================================
+# BEASTMODE PRO
+# ==========================================
 
 st.set_page_config(
     page_title="BEASTMODE PRO",
     page_icon="🦁",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 st.markdown("""
 <style>
 .stApp {
-    background: #080d17;
+    background-color: #080d17;
     color: #f2f5fa;
 }
 [data-testid="stSidebar"] {
-    background: #101827;
+    background-color: #101827;
 }
 h1, h2, h3 {
     color: #f5b82e !important;
 }
-.metric-card {
+div[data-testid="stMetric"] {
     background: #111c2d;
     border: 1px solid #263650;
-    border-radius: 12px;
-    padding: 18px;
-    margin-bottom: 10px;
-}
-.small-text {
-    color: #a7b5c9;
-    font-size: 13px;
-}
-.signal-box {
-    background: #142238;
-    border-left: 4px solid #f5b82e;
-    padding: 15px;
-    border-radius: 8px;
+    padding: 14px;
+    border-radius: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ------------------------------------------------------------
-# SESSION STATE
-# ------------------------------------------------------------
+# ==========================================
+# DERIV CONNECTION
+# ==========================================
 
-if "ticks" not in st.session_state:
-    st.session_state.ticks = {}
+DERIV_APP_ID = 1089
 
-if "prices" not in st.session_state:
-    st.session_state.prices = {}
+DERIV_WS_URL = (
+    f"wss://ws.derivws.com/websockets/v3"
+    f"?app_id={DERIV_APP_ID}"
+)
 
-if "demo_log" not in st.session_state:
-    st.session_state.demo_log = []
+# ==========================================
+# AVAILABLE MARKETS
+# ==========================================
 
-if "last_update" not in st.session_state:
-    st.session_state.last_update = None
-
-# ------------------------------------------------------------
-# MARKET DEFINITIONS
-# ------------------------------------------------------------
-
-DERIV_MARKETS = {
+MARKETS = {
     "Volatility 10 Index": "R_10",
     "Volatility 25 Index": "R_25",
     "Volatility 50 Index": "R_50",
@@ -79,338 +62,511 @@ DERIV_MARKETS = {
     "Volatility 100 Index": "R_100",
 }
 
-# Gold may not be available through the same public tick feed.
-GOLD_SYMBOLS = ["XAUUSD", "frxXAUUSD"]
+# ==========================================
+# SESSION DATA
+# ==========================================
 
-# ------------------------------------------------------------
+if "market_data" not in st.session_state:
+    st.session_state.market_data = {}
+
+if "analysis_log" not in st.session_state:
+    st.session_state.analysis_log = []
+
+# ==========================================
 # HEADER
-# ------------------------------------------------------------
+# ==========================================
 
 st.title("🦁 BEASTMODE PRO")
+
 st.markdown(
-    "**MULTI-MARKET ANALYSIS SYSTEM**  |  "
-    "SYNTHETIC INDICES • GOLD • DEMO SIGNALS"
+    "**LIVE MARKET ANALYSIS** "
+    "| SYNTHETIC INDICES | GOLD"
 )
 
 st.warning(
     "ANALYSIS ONLY: This application does not place trades. "
-    "Signals are educational estimates, not guaranteed predictions."
+    "Market analysis cannot guarantee profitable results."
 )
 
-# ------------------------------------------------------------
+# ==========================================
 # SIDEBAR
-# ------------------------------------------------------------
+# ==========================================
 
 st.sidebar.title("⚙️ CONTROL PANEL")
 
-market_choice = st.sidebar.selectbox(
-    "Choose Market",
-    list(DERIV_MARKETS.keys()) + ["GOLD (XAU/USD)"]
+market = st.sidebar.selectbox(
+    "Select Market",
+    list(MARKETS.keys()) + ["Gold (XAU/USD)"]
 )
 
-mode = st.sidebar.selectbox(
-    "Analysis Mode",
-    ["Live Data", "Analyze Saved Data"]
-)
-
-window_size = st.sidebar.slider(
-    "Analysis Window (ticks)",
-    min_value=20,
-    max_value=500,
-    value=100,
-    step=10
+tick_count = st.sidebar.slider(
+    "Number of ticks to analyze",
+    20,
+    500,
+    100,
+    10
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("BEASTMODE PRO v2.0")
-st.sidebar.caption("Live data requires a working market feed.")
+st.sidebar.caption("BEASTMODE PRO v2.1")
 
-# ------------------------------------------------------------
-# DERIV PUBLIC WEBSOCKET
-# ------------------------------------------------------------
+# ==========================================
+# FETCH DERIV MARKET DATA
+# ==========================================
 
-APP_ID = 1089
-DERIV_WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
+def fetch_history(symbol, count):
 
+    connection = None
 
-def digit_from_quote(quote):
-    """
-    Extract the final displayed decimal digit.
-    This is a basic digit-analysis method.
-    """
-    text = str(quote)
+    try:
+        connection = websocket.create_connection(
+            DERIV_WS_URL,
+            timeout=15,
+            origin="https://deriv.com"
+        )
 
-    if "." in text:
-        decimals = text.split(".")[1]
+        connection.settimeout(12)
+
+        request = {
+            "ticks_history": symbol,
+            "count": int(count),
+            "end": "latest",
+            "style": "ticks"
+        }
+
+        connection.send(json.dumps(request))
+
+        deadline = time.time() + 12
+
+        while time.time() < deadline:
+
+            message = json.loads(connection.recv())
+
+            if "error" in message:
+
+                error_message = message["error"].get(
+                    "message",
+                    "Deriv API error"
+                )
+
+                raise RuntimeError(error_message)
+
+            if "history" in message:
+
+                prices = message["history"].get(
+                    "prices",
+                    []
+                )
+
+                times = message["history"].get(
+                    "times",
+                    []
+                )
+
+                if not prices:
+                    raise RuntimeError(
+                        "No prices were returned."
+                    )
+
+                return (
+                    [float(price) for price in prices],
+                    times
+                )
+
+        raise TimeoutError(
+            "Deriv did not return data in time."
+        )
+
+    finally:
+
+        if connection is not None:
+
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+# ==========================================
+# LAST DIGIT ANALYSIS
+# ==========================================
+
+def get_last_digit(price):
+
+    price_text = str(price)
+
+    if "." in price_text:
+
+        decimals = price_text.split(".", 1)[1]
+
         if decimals:
             return int(decimals[-1])
 
-    return int(text[-1]) if text else 0
+    return int(price_text[-1]) if price_text else 0
 
+# ==========================================
+# PRICE MOVEMENT SUMMARY
+# ==========================================
 
-def load_saved_data():
-    return st.session_state.ticks.get(market_choice, [])
+def analyze_trend(prices):
 
+    if len(prices) < 15:
 
-def analyze_digits(values):
-    if not values:
-        return None
-
-    digits = [digit_from_quote(v) for v in values]
-    counts = Counter(digits)
-    total = len(digits)
-
-    table = pd.DataFrame({
-        "Digit": list(range(10)),
-        "Count": [counts.get(i, 0) for i in range(10)]
-    })
-
-    table["Frequency %"] = (
-        table["Count"] / total * 100
-    ).round(2)
-
-    even_count = sum(1 for d in digits if d % 2 == 0)
-    odd_count = total - even_count
-
-    over_count = sum(1 for d in digits if d >= 5)
-    under_count = total - over_count
-
-    return {
-        "digits": digits,
-        "table": table,
-        "total": total,
-        "even": even_count / total * 100,
-        "odd": odd_count / total * 100,
-        "over": over_count / total * 100,
-        "under": under_count / total * 100,
-        "counts": counts,
-    }
-
-
-def make_demo_signal(values):
-    """
-    A simple descriptive signal based on recent price movement.
-    It is NOT a validated predictive model.
-    """
-    if len(values) < 15:
-        return "WAIT", "Not enough observations for analysis."
-
-    numbers = np.array(values, dtype=float)
-
-    recent = numbers[-5:]
-    previous = numbers[-15:-5]
-
-    recent_mean = np.mean(recent)
-    previous_mean = np.mean(previous)
-
-    if recent_mean > previous_mean:
-        return "UPWARD MOMENTUM", (
-            "Recent prices average higher than the previous sample. "
-            "This is not a buy recommendation."
+        return (
+            "INSUFFICIENT DATA",
+            "Load at least 15 price observations."
         )
 
-    if recent_mean < previous_mean:
-        return "DOWNWARD MOMENTUM", (
-            "Recent prices average lower than the previous sample. "
-            "This is not a sell recommendation."
+    numbers = np.asarray(
+        prices,
+        dtype=float
+    )
+
+    recent_average = np.mean(
+        numbers[-5:]
+    )
+
+    previous_average = np.mean(
+        numbers[-15:-5]
+    )
+
+    if recent_average > previous_average:
+
+        return (
+            "UPWARD MOMENTUM",
+            "The recent average is higher than "
+            "the previous average."
         )
 
-    return "NEUTRAL", "No clear average-price difference in this sample."
+    if recent_average < previous_average:
 
+        return (
+            "DOWNWARD MOMENTUM",
+            "The recent average is lower than "
+            "the previous average."
+        )
 
-# ------------------------------------------------------------
-# LIVE CONNECTION
-# ------------------------------------------------------------
+    return (
+        "NEUTRAL",
+        "The averages are equal."
+    )
 
-st.subheader("📡 Market Data")
+# ==========================================
+# MARKET DATA SECTION
+# ==========================================
 
-if market_choice == "GOLD (XAU/USD)":
+st.header("📡 MARKET DATA")
+
+if market == "Gold (XAU/USD)":
+
     st.info(
-        "Gold requires a compatible live data provider or a Deriv feed "
-        "that offers the instrument. This prototype does not assume "
-        "that XAU/USD is available from the synthetic-index feed."
+        "Gold is included in this dashboard, but its live "
+        "price feed is not connected yet. A supported data "
+        "provider and confirmed Gold instrument symbol are "
+        "required. No fake Gold prices will be displayed."
     )
 
-    gold_provider = st.selectbox(
-        "Gold data status",
-        [
-            "Not connected",
-            "I have a compatible provider"
-        ]
-    )
-
-    st.metric("Gold feed", gold_provider)
-
-    st.write(
-        "To display real Gold prices, the app must be connected to "
-        "a supported Gold market-data source. No fake live price is shown."
+    st.metric(
+        "Gold Feed",
+        "Not Connected"
     )
 
 else:
-    symbol = DERIV_MARKETS[market_choice]
 
-    st.write(f"Selected market: **{market_choice}**")
-    st.code(f"Deriv symbol: {symbol}")
+    symbol = MARKETS[market]
 
-    st.info(
-        "Use the connection control below to request a one-time snapshot "
-        "from Deriv's public market feed."
+    st.write("Selected Market:", market)
+
+    st.caption(
+        f"Deriv symbol: {symbol}"
     )
 
-    if st.button("🔄 Request Live Tick Snapshot", use_container_width=True):
-        status = st.empty()
+    if st.button(
+        "🔄 REQUEST LIVE TICK DATA",
+        use_container_width=True
+    ):
 
-        try:
-            ws = websocket.create_connection(
-                DERIV_WS_URL,
-                timeout=12
-            )
+        with st.spinner(
+            "Connecting to Deriv..."
+        ):
 
-            ws.send(json.dumps({
-                "ticks_history": symbol,
-                "count": window_size,
-                "end": "latest",
-                "style": "ticks"
-            }))
+            try:
 
-            received = False
-            start = time.time()
-
-            while time.time() - start < 10:
-                raw = ws.recv()
-                data = json.loads(raw)
-
-                if "error" in data:
-                    raise RuntimeError(
-                        data["error"].get("message", "Deriv API error")
-                    )
-
-                if "history" in data:
-                    prices = data["history"].get("prices", [])
-
-                    st.session_state.ticks[market_choice] = [
-                        float(p) for p in prices
-                    ]
-
-                    st.session_state.prices[market_choice] = (
-                        float(prices[-1]) if prices else None
-                    )
-
-                    st.session_state.last_update = datetime.now()
-                    received = True
-                    break
-
-            ws.close()
-
-            if received:
-                status.success(
-                    f"Received {len(prices)} observations from Deriv."
+                prices, times = fetch_history(
+                    symbol,
+                    tick_count
                 )
-            else:
-                status.warning("No market data returned. Try again.")
 
-        except Exception as e:
-            status.error(
-                "Unable to connect to Deriv right now. "
-                f"Details: {e}"
-            )
+                st.session_state.market_data[market] = {
+                    "prices": prices,
+                    "times": times,
+                    "updated": datetime.now().strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                }
 
-# ------------------------------------------------------------
-# CURRENT DATA
-# ------------------------------------------------------------
+                st.success(
+                    f"Received {len(prices)} observations."
+                )
 
-st.markdown("---")
-st.subheader("📊 Analysis Dashboard")
+            except Exception as error:
 
-values = load_saved_data()
+                st.error(
+                    "LIVE CONNECTION FAILED: "
+                    f"{type(error).__name__}: {error}"
+                )
 
-if market_choice in st.session_state.prices:
-    current_price = st.session_state.prices[market_choice]
-else:
-    current_price = None
+                st.info(
+                    "No sample prices are substituted for "
+                    "live data. If HTTP 520 continues, the "
+                    "hosting network or WebSocket service "
+                    "may be failing the connection."
+                )
+
+# ==========================================
+# DASHBOARD
+# ==========================================
+
+st.divider()
+
+st.header("📊 ANALYSIS DASHBOARD")
+
+market_data = st.session_state.market_data.get(
+    market
+)
+
+prices = (
+    market_data["prices"]
+    if market_data
+    else []
+)
+
+latest_price = (
+    prices[-1]
+    if prices
+    else None
+)
+
+last_updated = (
+    market_data["updated"]
+    if market_data
+    else "Not available"
+)
 
 col1, col2, col3, col4 = st.columns(4)
 
 col1.metric(
     "Latest Price",
-    f"{current_price:.5f}" if current_price is not None else "N/A"
+    f"{latest_price:.5f}"
+    if latest_price is not None
+    else "N/A"
 )
 
 col2.metric(
-    "Observations",
-    len(values)
+    "Ticks Loaded",
+    len(prices)
 )
 
 col3.metric(
-    "Data Status",
-    "Connected" if values else "Waiting"
+    "Feed Status",
+    "Data Loaded"
+    if prices
+    else "Not Connected"
 )
 
 col4.metric(
     "Last Update",
-    st.session_state.last_update.strftime("%H:%M:%S")
-    if st.session_state.last_update else "N/A"
+    last_updated
 )
 
-# ------------------------------------------------------------
-# SYNTHETIC DIGIT ANALYSIS
-# ------------------------------------------------------------
+# ==========================================
+# DIGIT ANALYSIS
+# ==========================================
 
-if market_choice != "GOLD (XAU/USD)":
-    st.markdown("---")
-    st.subheader("🔢 Digit Frequency Analysis")
+if market != "Gold (XAU/USD)":
 
-    if values:
-        analysis = analyze_digits(values)
+    st.divider()
+
+    st.header("🔢 DIGIT ANALYSIS")
+
+    if prices:
+
+        digits = [
+            get_last_digit(price)
+            for price in prices
+        ]
+
+        digit_counts = Counter(digits)
+
+        table = pd.DataFrame({
+            "Digit": list(range(10)),
+            "Count": [
+                digit_counts.get(number, 0)
+                for number in range(10)
+            ]
+        })
+
+        table["Frequency %"] = (
+            table["Count"] / len(digits) * 100
+        ).round(2)
+
+        even_percentage = (
+            sum(digit % 2 == 0 for digit in digits)
+            / len(digits) * 100
+        )
+
+        over_percentage = (
+            sum(digit >= 5 for digit in digits)
+            / len(digits) * 100
+        )
 
         a, b, c, d = st.columns(4)
 
-        a.metric("Even Digits", f"{analysis['even']:.1f}%")
-        b.metric("Odd Digits", f"{analysis['odd']:.1f}%")
-        c.metric("Over (5–9)", f"{analysis['over']:.1f}%")
-        d.metric("Under (0–4)", f"{analysis['under']:.1f}%")
-
-        st.write("### Digit Distribution")
-
-        st.bar_chart(
-            analysis["table"].set_index("Digit")["Frequency %"]
+        a.metric(
+            "EVEN",
+            f"{even_percentage:.1f}%"
         )
 
+        b.metric(
+            "ODD",
+            f"{100 - even_percentage:.1f}%"
+        )
+
+        c.metric(
+            "OVER (5–9)",
+            f"{over_percentage:.1f}%"
+        )
+
+        d.metric(
+            "UNDER (0–4)",
+            f"{100 - over_percentage:.1f}%"
+        )
+
+        st.subheader("Digit Frequency Chart")
+
+        st.bar_chart(
+            table.set_index("Digit")["Frequency %"]
+        )
+
+        st.subheader("Digit Statistics")
+
         st.dataframe(
-            analysis["table"],
+            table,
             use_container_width=True,
             hide_index=True
         )
 
-        st.write("### Recent Last Digits")
-
-        recent_digits = analysis["digits"][-30:]
-
-        digit_text = "  •  ".join(
-            str(digit) for digit in recent_digits
+        st.caption(
+            "These statistics describe the observed sample. "
+            "They do not predict the next digit."
         )
 
-        st.code(digit_text)
+        st.subheader("Recent Last Digits")
 
-        st.caption(
-            "Digit frequencies describe the observed sample. "
-            "They do not establish the probability of the next digit."
+        st.code(
+            " | ".join(
+                str(digit)
+                for digit in digits[-30:]
+            )
         )
 
     else:
+
         st.info(
-            "No observations loaded yet. Choose a synthetic index "
-            "and request a live tick snapshot."
+            "No live data loaded. Select a synthetic index "
+            "and request live tick data."
         )
 
-# ------------------------------------------------------------
-# GOLD TECHNICAL ANALYSIS
-# ------------------------------------------------------------
+# ==========================================
+# PRICE TREND ANALYSIS
+# ==========================================
+
+st.divider()
+
+st.header("🧠 PRICE MOVEMENT ANALYSIS")
+
+if prices:
+
+    trend, explanation = analyze_trend(
+        prices
+    )
+
+    st.subheader(trend)
+
+    st.write(explanation)
 
 else:
-    st.markdown("---")
-    st.subheader("🥇 GOLD Technical Analysis")
-st.write(
-    "Once a supported Gold data source is connected, this section "
-    "can display moving averages, RSI, volatility and price charts."
+
+    st.info(
+        "Price movement analysis will appear "
+        "after market data is loaded."
+    )
+
+# ==========================================
+# DEMO ANALYSIS LOG
+# ==========================================
+
+st.divider()
+
+st.header("🧪 DEMO ANALYSIS LOG")
+
+st.caption(
+    "This records analysis only. "
+    "It does not place broker orders."
+)
+
+if st.button("SAVE CURRENT ANALYSIS"):
+
+    if prices:
+
+        trend, explanation = analyze_trend(
+            prices
+        )
+
+    else:
+
+        trend = "NO DATA"
+
+        explanation = (
+            "No market observations loaded."
+        )
+
+    st.session_state.analysis_log.append({
+        "Time": datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "Market": market,
+        "Ticks": len(prices),
+        "Summary": trend,
+        "Notes": explanation
+    })
+
+    st.success(
+        "Analysis saved for this session."
+    )
+
+if st.session_state.analysis_log:
+
+    st.dataframe(
+        pd.DataFrame(
+            st.session_state.analysis_log
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    if st.button("CLEAR ANALYSIS LOG"):
+
+        st.session_state.analysis_log = []
+
+        st.rerun()
+
+# ==========================================
+# FOOTER
+# ==========================================
+
+st.divider()
+
+st.caption(
+    "BEASTMODE PRO | Analysis prototype | "
+    "No automatic trading | No guaranteed outcomes."
 )
