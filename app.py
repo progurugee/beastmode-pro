@@ -313,12 +313,9 @@ elif page == "Strategy Engine":
 
     st.markdown("## 🧠 BEASTMODE STRATEGY ENGINE")
 
-    st.write(
-        "The initial strategy is inspired by your DESPERADO "
-        "Expert Advisor. It uses trend direction and moving-average "
-        "confirmation as the starting point."
-    )
-
+    st.write(f"Configured MT5 lot size: {lot_size:.2f}")
+st.write(f"Configured daily loss limit: {max_daily_loss:.1f}%")
+st.write(f"Configured position limit: {max_open_positions}")
     st.markdown("### Strategy configuration")
 
     trend_period = st.number_input(
