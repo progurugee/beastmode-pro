@@ -196,12 +196,11 @@ def request_deriv(payload):
 
 def test_connection():
     """
-    Check the connection using a public active-symbols request.
+    Check the public connection using a ping request.
     """
 
     return request_deriv({
-        "active_symbols": "brief",
-        "product_type": "basic",
+        "ping": 1,
         "req_id": 101,
     })
 
