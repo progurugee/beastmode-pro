@@ -1,448 +1,454 @@
-import json
-import time
-
-import pandas as pd
 import streamlit as st
-import websocket
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import plotly.graph_objects as go
+from datetime import datetime
 
-
-# ==========================================
-# BEASTMODE PRO
-# Read-only Deriv market data dashboard
-# ==========================================
+# ==========================================================
+# BEASTMODE AI — TRADING DASHBOARD PROTOTYPE
+# DESPERADO-INSPIRED MULTI-TIMEFRAME STRATEGY
+# ==========================================================
 
 st.set_page_config(
-    page_title="BEASTMODE PRO",
+    page_title="BEASTMODE AI",
     page_icon="🐺",
     layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# New public WebSocket endpoint from Deriv.
-# No login or trading token is needed for public data.
-DERIV_WS_URL = (
-    "wss://api.derivws.com/trading/v1/options/ws/public"
+# -------------------- DESIGN ------------------------------
+
+st.markdown("""
+<style>
+.stApp {
+    background: #080b12;
+    color: #ffffff;
+}
+[data-testid="stSidebar"] {
+    background: #101522;
+}
+h1, h2, h3 {
+    color: #ff3030;
+}
+div.stButton > button {
+    width: 100%;
+    border-radius: 8px;
+    font-weight: bold;
+    min-height: 45px;
+}
+.status-box {
+    background: #111827;
+    padding: 18px;
+    border-radius: 12px;
+    border: 1px solid #293347;
+    margin-bottom: 10px;
+}
+.small-note {
+    color: #a8b3c7;
+    font-size: 13px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -------------------- SESSION STATE -----------------------
+
+if "bot_running" not in st.session_state:
+    st.session_state.bot_running = False
+
+if "connected" not in st.session_state:
+    st.session_state.connected = False
+
+if "trade_history" not in st.session_state:
+    st.session_state.trade_history = []
+
+# -------------------- HEADER --------------------------------
+
+st.markdown("# 🐺 BEASTMODE AI")
+st.markdown("### AUTOMATED TRADING INTELLIGENCE")
+st.caption("DESPERADO-inspired strategy | Dashboard prototype")
+
+st.divider()
+
+# -------------------- SIDEBAR -------------------------------
+
+st.sidebar.markdown("# 🐺 BEASTMODE")
+st.sidebar.caption("CONTROL CENTRE")
+
+page = st.sidebar.radio(
+    "MENU",
+    [
+        "Trading Dashboard",
+        "Strategy Engine",
+        "Account Connection",
+        "Trade History",
+        "Risk Management"
+    ]
 )
+
+st.sidebar.divider()
+st.sidebar.markdown("### SYSTEM STATUS")
+
+if st.session_state.bot_running:
+    st.sidebar.success("BOT STATUS: RUNNING")
+else:
+    st.sidebar.warning("BOT STATUS: STOPPED")
+
+if st.session_state.connected:
+    st.sidebar.success("ACCOUNT: DEMO CONNECTION")
+else:
+    st.sidebar.info("ACCOUNT: NOT CONNECTED")
+
+st.sidebar.caption("Live trading is not enabled in this prototype.")
+
+# -------------------- MARKET DATA ---------------------------
 
 MARKETS = {
-    "Volatility 10 Index": "R_10",
-    "Volatility 25 Index": "R_25",
-    "Volatility 50 Index": "R_50",
-    "Volatility 75 Index": "R_75",
-    "Volatility 100 Index": "R_100",
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "JPY=X",
+    "Gold": "GC=F",
+    "Nasdaq 100": "NQ=F",
+    "S&P 500": "^GSPC"
 }
 
-
-# ==========================================
-# Styling
-# ==========================================
-
-st.markdown(
-    """
-    <style>
-    .stApp {
-        background: #080d18;
-        color: #f3f6fc;
-    }
-
-    [data-testid="stSidebar"] {
-        background: #101827;
-    }
-
-    .hero {
-        padding: 24px;
-        border-radius: 16px;
-        background: linear-gradient(120deg, #13233d, #172d26);
-        border: 1px solid #30415c;
-        margin-bottom: 20px;
-    }
-
-    .hero h1 {
-        color: #ffffff;
-        margin: 0;
-    }
-
-    .hero p {
-        color: #b2c1d5;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+SYNTHETIC_MARKETS = [
+    "Volatility 10 Index",
+    "Volatility 25 Index",
+    "Volatility 50 Index",
+    "Volatility 75 Index",
+    "Volatility 100 Index",
+    "Boom 500 Index",
+    "Crash 500 Index",
+    "Step Index"
+]
 
 
-# ==========================================
-# Header
-# ==========================================
-
-st.markdown(
-    """
-    <div class="hero">
-        <h1>🐺 BEASTMODE PRO</h1>
-        <p>Live market data • Digit analysis • Statistics</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# ==========================================
-# Connection and request functions
-# ==========================================
-
-def request_deriv(payload):
-    """
-    Open a fresh WebSocket connection, send one request,
-    and wait for its response.
-
-    Returns a dictionary with either a response or
-    a diagnostic error message.
-    """
-
-    ws = None
-    started = time.time()
-
+@st.cache_data(ttl=60)
+def get_market_data(symbol):
     try:
-        ws = websocket.create_connection(
-            DERIV_WS_URL,
-            timeout=15,
-            origin="https://deriv.com",
+        data = yf.download(
+            symbol,
+            period="5d",
+            interval="5m",
+            progress=False,
+            auto_adjust=True
         )
 
-        ws.settimeout(10)
+        if data is None or data.empty:
+            return pd.DataFrame()
 
-        ws.send(json.dumps(payload))
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
 
-        while time.time() - started < 20:
-            raw = ws.recv()
+        return data.dropna()
 
-            if not raw:
-                continue
-
-            response = json.loads(raw)
-
-            if response.get("error"):
-                err = response["error"]
-
-                return {
-                    "ok": False,
-                    "error": (
-                        f"Deriv API error: "
-                        f"{err.get('code', 'Unknown')} — "
-                        f"{err.get('message', 'No details provided')}"
-                    ),
-                }
-
-            # Match the response to this request.
-            if response.get("req_id") == payload.get("req_id"):
-                return {
-                    "ok": True,
-                    "data": response,
-                }
-
-            # Some responses may not include req_id.
-            if (
-                "msg_type" in response
-                and response.get("msg_type") in (
-                    "history",
-                    "active_symbols",
-                    "ping",
-                    "time",
-                    "tick",
-                )
-            ):
-                return {
-                    "ok": True,
-                    "data": response,
-                }
-
-        return {
-            "ok": False,
-            "error": "Timed out waiting for the Deriv response.",
-        }
-
-    except websocket.WebSocketBadStatusException as exc:
-        status = getattr(exc, "status_code", "unknown")
-
-        return {
-            "ok": False,
-            "error": (
-                f"WebSocket handshake failed with HTTP {status}. "
-                "The server or an intermediary rejected the connection."
-            ),
-        }
-
-    except websocket.WebSocketTimeoutException:
-        return {
-            "ok": False,
-            "error": (
-                "The WebSocket connection timed out while waiting "
-                "for a response."
-            ),
-        }
-
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error": f"{type(exc).__name__}: {str(exc)[:400]}",
-        }
-
-    finally:
-        if ws is not None:
-            try:
-                ws.close()
-            except Exception:
-                pass
+    except Exception:
+        return pd.DataFrame()
 
 
-def test_connection():
+def analyse_strategy(data):
     """
-    Check the public connection using a ping request.
+    Educational implementation of the DESPERADO-inspired
+    moving-average strategy.
+
+    This uses one downloaded timeframe, not actual Deriv
+    multi-timeframe execution or live trading.
     """
 
-    return request_deriv({
-        "ping": 1,
-        "req_id": 101,
-    })
+    if data.empty or len(data) < 60:
+        return {
+            "signal": "INSUFFICIENT DATA",
+            "price": None,
+            "ma": None
+        }
+
+    close = data["Close"].astype(float)
+    ma = close.rolling(50).mean()
+
+    price = float(close.iloc[-1])
+    average = float(ma.iloc[-1])
+
+    if pd.isna(average):
+        signal = "INSUFFICIENT DATA"
+    elif price > average:
+        signal = "BULLISH BIAS"
+    elif price < average:
+        signal = "BEARISH BIAS"
+    else:
+        signal = "NO CLEAR BIAS"
+
+    return {
+        "signal": signal,
+        "price": price,
+        "ma": average
+    }
 
 
-def fetch_history(symbol, count):
-    """
-    Request historical ticks for the selected symbol.
-    """
+# -------------------- DASHBOARD PAGE -----------------------
 
-    return request_deriv({
-        "ticks_history": symbol,
-        "count": int(count),
-        "end": "latest",
-        "style": "ticks",
-        "req_id": 202,
-    })
+if page == "Trading Dashboard":
 
+    left, right = st.columns([2, 1])
 
-# ==========================================
-# Sidebar
-# ==========================================
-
-st.sidebar.title("🐺 BEASTMODE PRO")
-
-market_name = st.sidebar.selectbox(
-    "Choose a market",
-    list(MARKETS.keys()),
-)
-
-symbol = MARKETS[market_name]
-
-count = st.sidebar.selectbox(
-    "Historical ticks",
-    [100, 250, 500, 750, 1000],
-    index=2,
-)
-
-st.sidebar.caption("Gold is not connected in this version.")
-st.sidebar.caption("This app does not place trades.")
-
-
-# ==========================================
-# Main dashboard
-# ==========================================
-
-st.subheader(market_name)
-st.caption(f"Deriv symbol: {symbol}")
-
-left, right = st.columns(2)
-
-with left:
-    test_button = st.button(
-        "🔌 TEST CONNECTION",
-        use_container_width=True,
-    )
-
-with right:
-    data_button = st.button(
-        "📡 REQUEST LIVE TICK DATA",
-        type="primary",
-        use_container_width=True,
-    )
-
-
-# ==========================================
-# Connection test
-# ==========================================
-
-if test_button:
-    with st.spinner("Testing the new Deriv endpoint..."):
-        result = test_connection()
-
-    if not result["ok"]:
-        st.error("Connection test failed.")
-        st.code(result["error"], language=None)
-
-        st.info(
-            "If this is another HTTP 520 error, the new endpoint "
-            "is also being rejected. We will then investigate "
-            "the hosting or network path instead of repeatedly "
-            "changing the analysis code."
+    with left:
+        selected_market = st.selectbox(
+            "SELECT MARKET",
+            list(MARKETS.keys()) + SYNTHETIC_MARKETS
         )
+
+    with right:
+        trade_size = st.number_input(
+            "TRADE SIZE (DISPLAY ONLY)",
+            min_value=0.01,
+            max_value=100.0,
+            value=0.01,
+            step=0.01
+        )
+
+    if selected_market in MARKETS:
+        data = get_market_data(MARKETS[selected_market])
+    else:
+        data = pd.DataFrame()
+
+    st.divider()
+
+    # Strategy analysis
+    analysis = analyse_strategy(data)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if analysis["price"] is not None:
+            st.metric(
+                "LATEST REFERENCE PRICE",
+                f'{analysis["price"]:.5f}'
+            )
+        else:
+            st.metric("LATEST REFERENCE PRICE", "Unavailable")
+
+    with col2:
+        st.metric("STRATEGY BIAS", analysis["signal"])
+
+    with col3:
+        st.metric(
+            "BOT STATUS",
+            "RUNNING" if st.session_state.bot_running else "STOPPED"
+        )
+
+    # Chart
+    st.markdown("### 📊 MARKET CHART")
+
+    if not data.empty:
+        chart = go.Figure()
+
+        chart.add_trace(go.Candlestick(
+            x=data.index,
+            open=data["Open"],
+            high=data["High"],
+            low=data["Low"],
+            close=data["Close"],
+            name=selected_market
+        ))
+
+        chart.add_trace(go.Scatter(
+            x=data.index,
+            y=data["Close"].rolling(50).mean(),
+            name="50-Period Moving Average",
+            line=dict(width=2)
+        ))
+
+        chart.update_layout(
+            template="plotly_dark",
+            height=480,
+            xaxis_rangeslider_visible=False,
+            margin=dict(l=10, r=10, t=30, b=10)
+        )
+
+        st.plotly_chart(chart, use_container_width=True)
 
     else:
-        response = result["data"]
-        symbols = response.get("active_symbols", [])
-
-        st.success("Connected to Deriv's public market-data endpoint.")
-
-        if symbols:
-            st.write(f"Available symbols returned: {len(symbols)}")
-        else:
-            st.write("Deriv returned a response:", response)
-
-
-# ==========================================
-# Request historical market data
-# ==========================================
-
-if data_button:
-    with st.spinner("Requesting historical ticks from Deriv..."):
-        result = fetch_history(symbol, count)
-
-    if not result["ok"]:
-        st.error("Could not retrieve market data.")
-        st.code(result["error"], language=None)
-
         st.warning(
-            "No sample prices have been substituted for live data."
+            "Reference data is unavailable for this market. "
+            "Synthetic-index prices are not being retrieved "
+            "from Deriv in this prototype."
         )
 
-    else:
-        response = result["data"]
-        history = response.get("history", {})
+    st.divider()
 
-        prices = history.get("prices", [])
-        times = history.get("times", [])
+    # Start and stop controls
+    st.markdown("### 🎮 BOT CONTROL")
 
-        if not prices:
-            st.error(
-                "The request succeeded, but no historical prices "
-                "were returned. Check the selected market symbol."
-            )
+    start_col, stop_col = st.columns(2)
 
-        else:
-            prices = pd.to_numeric(
-                pd.Series(prices),
-                errors="coerce",
-            ).dropna()
-
-            st.success(
-                f"Received {len(prices)} historical tick prices."
-            )
-
-            if prices.empty:
-                st.error("No usable numeric prices were returned.")
-
+    with start_col:
+        if st.button("▶ START BOT", type="primary"):
+            if not st.session_state.connected:
+                st.error(
+                    "Connect a demo account before starting. "
+                    "The connection feature is currently a prototype."
+                )
             else:
-                latest = float(prices.iloc[-1])
-
-                previous = (
-                    float(prices.iloc[-2])
-                    if len(prices) > 1
-                    else latest
+                st.session_state.bot_running = True
+                st.warning(
+                    "Prototype started. No real trades are being placed."
                 )
+                st.rerun()
 
-                average = float(prices.mean())
+    with stop_col:
+        if st.button("⏹ STOP BOT"):
+            st.session_state.bot_running = False
+            st.success("Prototype stopped.")
+            st.rerun()
 
-                c1, c2, c3 = st.columns(3)
-
-                c1.metric(
-                    "Latest received price",
-                    f"{latest:.5f}",
-                )
-
-                c2.metric(
-                    "Previous received price",
-                    f"{previous:.5f}",
-                    delta=f"{latest - previous:.5f}",
-                )
-
-                c3.metric(
-                    "Average price",
-                    f"{average:.5f}",
-                )
-
-                st.subheader("📈 Historical Prices")
-
-                chart_df = pd.DataFrame({
-                    "Price": prices.reset_index(drop=True)
-                })
-
-                st.line_chart(
-                    chart_df,
-                    use_container_width=True,
-                )
-
-                st.subheader("🔢 Last-digit distribution")
-
-                digit_strings = (
-                    prices.astype(str)
-                    .str.replace(".", "", regex=False)
-                    .str.replace("-", "", regex=False)
-                    .str[-1:]
-                )
-
-                digits = pd.to_numeric(
-                    digit_strings,
-                    errors="coerce",
-                ).dropna().astype(int)
-
-                counts = (
-                    digits.value_counts()
-                    .reindex(range(10), fill_value=0)
-                    .sort_index()
-                )
-
-                percentages = (
-                    counts / max(len(digits), 1) * 100
-                )
-
-                digit_df = pd.DataFrame({
-                    "Digit": range(10),
-                    "Count": counts.values,
-                    "Percentage": percentages.values.round(2),
-                })
-
-                st.bar_chart(
-                    digit_df.set_index("Digit")["Percentage"],
-                    use_container_width=True,
-                )
-
-                st.dataframe(
-                    digit_df,
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-                if len(times) == len(history.get("prices", [])):
-                    with st.expander("View received timestamps"):
-                        st.dataframe(
-                            pd.DataFrame({
-                                "Timestamp": times,
-                                "Price": history["prices"],
-                            }),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-
-                st.caption(
-                    "These are historical statistics, not predictions. "
-                    "They do not guarantee future market outcomes."
-                )
+    st.info(
+        "Starting this prototype does not execute trades. "
+        "Live execution requires a verified trading connection."
+    )
 
 
-# ==========================================
-# Footer
-# ==========================================
+# -------------------- STRATEGY ENGINE -----------------------
 
-st.markdown("---")
+elif page == "Strategy Engine":
 
-st.caption(
-    "BEASTMODE PRO • Read-only market data analyzer • "
-    "No automatic trading"
+    st.markdown("## 🧠 BEASTMODE STRATEGY ENGINE")
+
+    st.write(
+        "The initial strategy is inspired by your DESPERADO "
+        "Expert Advisor. It uses trend direction and moving-average "
+        "confirmation as the starting point."
+    )
+
+    st.markdown("### Strategy configuration")
+
+    trend_period = st.number_input(
+        "Trend moving-average period",
+        min_value=5,
+        max_value=300,
+        value=50
+    )
+
+    signal_period = st.number_input(
+        "Signal moving-average period",
+        min_value=5,
+        max_value=300,
+        value=50
+    )
+
+    st.write("**Higher timeframe:** H1")
+    st.write("**Signal timeframes:** M5, M15, M30")
+    st.write("**Signal type:** Trend-following")
+
+    st.warning(
+        "The settings above describe the intended strategy. "
+        "A complete multi-timeframe engine has not yet been implemented."
+    )
+
+    st.markdown("### Signal rules")
+
+    st.markdown("""
+    - BUY candidates: higher-timeframe trend is bullish and
+      lower timeframes confirm bullish conditions.
+    - SELL candidates: higher-timeframe trend is bearish and
+      lower timeframes confirm bearish conditions.
+    - Otherwise: wait for a clearer setup.
+    - Risk checks must pass before any real order is sent.
+    """)
+
+
+# -------------------- ACCOUNT CONNECTION --------------------
+
+elif page == "Account Connection":
+
+    st.markdown("## 🔌 CONNECT DERIV MT5 ACCOUNT")
+
+    st.warning(
+        "This form is a prototype only. It does not authenticate "
+        "with Deriv or connect to an MT5 trading server."
+    )
+
+    st.markdown("### Account details")
+
+    st.text_input(
+        "MT5 LOGIN NUMBER",
+        placeholder="Enter your demo MT5 login"
+    )
+
+    st.text_input(
+        "MT5 SERVER",
+        placeholder="Enter the exact server name"
+    )
+
+    st.selectbox(
+        "ACCOUNT TYPE",
+        ["Demo"]
+    )
+
+    st.info(
+        "Do not enter your trading password here. "
+        "Secure authentication and server-side MT5 connectivity "
+        "must be implemented before account credentials are accepted."
+    )
+
+    if st.button("VERIFY DEMO CONNECTION"):
+        st.error(
+            "Connection is not implemented yet. "
+            "No account has been connected."
         )
+
+
+# -------------------- TRADE HISTORY -------------------------
+
+elif page == "Trade History":
+
+    st.markdown("## 📜 TRADE HISTORY")
+
+    st.info(
+        "No live trading history is available because "
+        "this prototype does not execute trades."
+    )
+
+    if st.session_state.trade_history:
+        st.dataframe(
+            pd.DataFrame(st.session_state.trade_history),
+            use_container_width=True
+        )
+    else:
+        st.write("No trades recorded.")
+
+
+# -------------------- RISK MANAGEMENT -----------------------
+
+elif page == "Risk Management":
+
+    st.markdown("## 🛡️ RISK MANAGEMENT")
+
+    st.write(
+        "These are configuration values for the planned trading engine. "
+        "They do not currently control real trades."
+    )
+
+    lot_size = st.number_input(
+        "Default lot size (MT5 only)",
+        min_value=0.01,
+        max_value=10.0,
+        value=0.01,
+        step=0.01
+    )
+
+    max_daily_loss = st.number_input(
+        "Maximum daily loss (%)",
+        min_value=1.0,
+        max_value=50.0,
+        value=3.0,
+        step=0.5
+    )
+
+    max_open_positions = st.number_input(
+        "Maximum open positions",
+        min_value=1,
+        max_value=20,
+        value=1
+    )
+
+    st.write(f"Configured MT
