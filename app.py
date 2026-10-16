@@ -410,6 +410,7 @@ if market_choice != "GOLD (XAU/USD)":
 else:
     st.markdown("---")
     st.subheader("🥇 GOLD Technical Analysis")
-
-    st.write(
-        "Once a supported
+st.write(
+    "Once a supported Gold data source is connected, this section "
+    "can display moving averages, RSI, volatility and price charts."
+)
