@@ -1,7 +1,7 @@
 
 import streamlit as st
-import pandas as pd
-from datetime import datetime
+from PIL import Image
+from pathlib import Path
 
 st.set_page_config(
     page_title="BEASTMODE AI",
@@ -10,100 +10,62 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-if "running" not in st.session_state:
-    st.session_state.running = False
-if "trades" not in st.session_state:
-    st.session_state.trades = []
-
 st.markdown("""
 <style>
 .stApp {
-    background: radial-gradient(ellipse at 50% 0%, #19213a 0%, #080b12 55%);
-    color: white;
+    background: #030813;
+    color: #e9f5ff;
 }
 [data-testid="stSidebar"] {
-    background: #0c111c;
-    border-right: 1px solid #252d40;
+    background: #050d1b;
+    border-right: 1px solid #075b91;
 }
 .block-container {
-    max-width: 1450px;
-    padding-top: 1.5rem;
+    padding: 1.2rem 1.5rem;
+    max-width: 1600px;
 }
-h1, h2, h3, p, label { color: #f4f7ff; }
-.robot {
-    margin: 12px auto;
-    width: 230px;
-    height: 205px;
-    border: 3px solid #4e8cff;
-    border-radius: 48% 48% 40% 40%;
-    background: linear-gradient(145deg,#283d62,#111827 70%);
-    box-shadow: 0 0 35px #2767ff55, inset 0 0 25px #61a5ff33;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-}
-.eyes {
-    display: flex;
-    gap: 36px;
-    margin: 12px 0 20px;
-}
-.eye {
-    width: 35px;
-    height: 27px;
-    border-radius: 50%;
-    background: #54eaff;
-    box-shadow: 0 0 18px #54eaff;
-}
-.mouth {
-    width: 76px;
-    height: 12px;
-    border-radius: 5px;
-    background: #ff783d;
-    box-shadow: 0 0 15px #ff783d;
-}
-.antenna {
-    width: 7px;
-    height: 27px;
-    background: #ff9b43;
-    border-radius: 5px;
-    position: absolute;
-    top: -27px;
+h1, h2, h3, p, label {
+    color: #e9f5ff;
 }
 .brand {
-    text-align: center;
-    font-size: 34px;
+    font-size: 32px;
     font-weight: 900;
-    letter-spacing: 3px;
+    letter-spacing: 2px;
+    text-align: center;
+    color: #42dfff;
 }
-.brand span { color: #ff3e62; }
 .sub {
     text-align: center;
-    color: #9eacc6;
+    color: #8baaca;
     letter-spacing: 2px;
     font-size: 12px;
 }
 .panel {
-    background: #101725;
-    border: 1px solid #29354a;
-    border-radius: 14px;
-    padding: 18px;
+    background: linear-gradient(145deg,#071629,#030a14);
+    border: 1px solid #087bb9;
+    border-radius: 13px;
+    padding: 16px;
     margin-bottom: 12px;
+    box-shadow: 0 0 15px #007bff12;
 }
-.small { color: #9eacc6; font-size: 13px; }
 div.stButton > button {
-    min-height: 48px;
+    height: 52px;
     border-radius: 10px;
-    font-weight: 800;
+    font-size: 19px;
+    font-weight: 900;
 }
-hr { border-color: #29354a; }
+hr {
+    border-color: #12334e;
+}
 </style>
 """, unsafe_allow_html=True)
 
+if "running" not in st.session_state:
+    st.session_state.running = False
+
 with st.sidebar:
-    st.markdown("## 🤖 BEASTMODE")
-    st.markdown("### AI CONTROL")
+    st.markdown("## 🤖 BEASTMODE AI")
+    st.caption("INTELLIGENT TRADING CONTROL")
     page = st.radio(
         "Navigation",
         [
@@ -114,140 +76,128 @@ with st.sidebar:
             "Trade History",
             "Connect Broker",
             "Settings"
-        ],
-        label_visibility="collapsed"
+        ]
     )
     st.divider()
-    st.caption("SYSTEM STATUS")
-    st.markdown("🟡 Broker: Not connected")
-    st.markdown(
-        "🟢 Control: Running" if st.session_state.running
-        else "⚪ Control: Stopped"
+    st.markdown("### SYSTEM STATUS")
+    st.write("🟢 Dashboard online")
+    st.write("🔴 Broker not connected")
+    st.write(
+        "🟡 Control running" if st.session_state.running
+        else "⚪ Control stopped"
     )
-    st.caption("Dashboard preview — no live orders are sent.")
-
-st.markdown(
-    '<div class="brand">BEASTMODE <span>AI</span></div>'
-    '<div class="sub">INTELLIGENT TRADING CONTROL SYSTEM</div>',
-    unsafe_allow_html=True
-)
-st.write("")
 
 if page == "Dashboard":
-    left, center, right = st.columns([1, 1.5, 1])
+    st.markdown(
+        '<div class="brand">BEASTMODE <span style="color:#ff3155">AI</span></div>'
+        '<div class="sub">INTELLIGENT TRADING CONTROL SYSTEM</div>',
+        unsafe_allow_html=True
+    )
+    st.write("")
+
+    left, center, right = st.columns([1, 2.2, 1])
 
     with center:
-        st.markdown("""
-        <div class="robot">
-            <div class="antenna"></div>
-            <div style="color:#9dbdff;font-size:12px;letter-spacing:4px">
-                B M - 01
-            </div>
-            <div class="eyes">
-                <div class="eye"></div>
-                <div class="eye"></div>
-            </div>
-            <div class="mouth"></div>
-        </div>
-        """, unsafe_allow_html=True)
+        image_path = Path("beastmode_robot.png")
 
-        st.markdown(
-            '<div style="text-align:center;font-weight:800;'
-            'font-size:20px">BEASTMODE ROBOT</div>',
-            unsafe_allow_html=True
-        )
-        status = "DEMO PREVIEW — RUNNING" if st.session_state.running \
-            else "STANDBY — NOT TRADING"
-        st.markdown(
-            f'<div class="sub">{status}</div>',
-            unsafe_allow_html=True
-        )
-        st.write("")
+        if image_path.exists():
+            try:
+                image = Image.open(image_path).convert("RGB")
+                w, h = image.size
+
+                # Crop the central robot from the full mockup.
+                robot = image.crop((
+                    int(w * 0.30),
+                    0,
+                    int(w * 0.73),
+                    int(h * 0.48)
+                ))
+                st.image(robot, use_container_width=True)
+            except Exception:
+                st.error("Could not read the robot image.")
+        else:
+            st.error(
+                "Robot image not found. Check that "
+                "beastmode_robot.png is in the repository root."
+            )
 
         start_col, stop_col = st.columns(2)
+
         with start_col:
             if st.button("▶ START", type="primary",
                          use_container_width=True):
                 st.session_state.running = True
                 st.rerun()
+
         with stop_col:
             if st.button("■ STOP", use_container_width=True):
                 st.session_state.running = False
                 st.rerun()
 
+        if st.session_state.running:
+            st.success("Dashboard control enabled — trading is not connected.")
+        else:
+            st.info("Standby — broker not connected.")
+
         st.caption(
-            "START and STOP currently control the dashboard preview only. "
-            "Trading execution is not connected."
+            "These buttons control the dashboard display only. "
+            "They do not place trades."
         )
 
-    st.divider()
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### SYSTEM")
+        st.write("Dashboard: Online")
+        st.write("Broker: Not connected")
+        st.write("Strategy: Not active")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### MARKET PRICES")
+        st.write("Live prices: Not connected")
+        st.write("BTC/USD — unavailable")
+        st.write("EUR/USD — unavailable")
+        st.write("XAU/USD — unavailable")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown("### ACCOUNT")
+        st.write("Balance: Not connected")
+        st.write("Open trades: 0")
+        st.write("Profit/Loss: —")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown("### 📊 LIVE TRADES")
-
-    if st.session_state.trades:
-        st.dataframe(
-            pd.DataFrame(st.session_state.trades),
-            use_container_width=True,
-            hide_index=True
-        )
-    else:
-        st.info(
-            "No trades yet. Real or demo trades will appear here "
-            "after the strategy and broker are integrated."
-        )
-
-    st.divider()
-    st.markdown("### 🌐 MARKET WATCH")
-    st.caption(
-        "Market prices will appear here after we connect a live data source. "
-        "No live prices are being shown in this preview."
-    )
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Market data", "Not connected")
-    m2.metric("Broker", "Not connected")
-    m3.metric("Strategy", "Not active")
+    st.write("No trades yet. Broker execution is not implemented.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Live Trades":
     st.title("📊 Live Trades")
-    st.info("Trade records will appear here when demo execution is integrated.")
+    st.info("Trade records will appear after broker execution is integrated.")
 
 elif page == "Strategy":
-    st.title("🧠 BEASTMODE Strategy")
-    st.markdown("""
-    **Planned strategy reference: DESPERADO-inspired trend confirmation**
-
-    - H1: determine the main trend using the 50-period SMA.
-    - M5, M15 and M30: confirm trend direction.
-    - BUY candidate: all required timeframes are above their SMAs.
-    - SELL candidate: all required timeframes are below their SMAs.
-    - Otherwise: WAIT.
-
-    These rules still need to be verified against the original strategy.
-    No signals or orders are generated by this preview.
-    """)
+    st.title("🧠 Strategy")
+    st.write("Planned: DESPERADO-style multi-timeframe trend confirmation.")
+    st.warning("The original strategy source has not yet been verified.")
 
 elif page == "Market Analysis":
     st.title("📈 Market Analysis")
-    st.info("Live analysis will be available after a market data connection is added.")
+    st.info("Market data connection is not implemented.")
 
 elif page == "Trade History":
     st.title("📚 Trade History")
-    st.info("Completed trade records will appear here after demo execution is implemented.")
+    st.info("Completed trade history will appear after execution is integrated.")
 
 elif page == "Connect Broker":
     st.title("🔌 Connect Broker")
-    st.markdown("Broker connections have not been implemented yet.")
-    st.warning(
-        "Do not enter API tokens or broker passwords on this preview page."
-    )
-    st.markdown("Planned integration: Deriv API, subject to compatibility testing.")
+    st.write("Deriv API integration is planned.")
+    st.warning("Do not enter broker passwords or API tokens on this preview.")
 
 elif page == "Settings":
     st.title("⚙️ Settings")
-    st.markdown("Trading settings will be added after the strategy and demo testing.")
-    st.caption("Risk limits must be configured before any order execution is enabled.")
+    st.info("Trading settings will be added after demo testing.")
 
 st.divider()
-st.caption(
-    f"BEASTMODE AI · Dashboard preview · "
-    f"{datetime.now().strftime('%d %b %Y')}"
-)
+st.caption("BEASTMODE AI · Dashboard preview · No live trading enabled")
